@@ -1,0 +1,620 @@
+/*
+ * Copyright 2014 IBM Corp. All Rights Reserved
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ * http://www.apache.org/licenses/LICENSE-2.0 
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.example.blumixlist;
+
+import com.ibm.mobile.services.data.IBMDataObject;
+import com.ibm.mobile.services.data.IBMDataObjectSpecialization;
+
+@IBMDataObjectSpecialization("Item")
+public class Item extends IBMDataObject {
+	public static final String CLASS_NAME = "Item";
+	private static final String NAME = "name";
+	
+	/**
+	 * Gets the name of the Item.
+	 * @return String itemName
+	 */
+	public String getName() {
+		return (String) getObject(NAME);
+	}
+
+	/**
+	 * Sets the name of a list item, as well as calls setCreationTime().
+	 * @param String itemName
+	 */
+	public void setName(String itemName) {
+		setObject(NAME, (itemName != null) ? itemName : "");
+	}
+	
+	/**
+	 * When calling toString() for an item, we'd really only want the name.
+	 * @return String theItemName
+	 */
+	public String toString() {
+		String theItemName = "";
+		theItemName = getName();
+		return theItemName;
+	}
+}
+
+
+package com.example.blumixlist;
+
+import java.util.List;
+
+import bolts.Continuation;
+import bolts.Task;
+
+import com.ibm.mobile.services.data.IBMDataObject;
+
+import android.support.v7.app.ActionBarActivity;
+import android.app.Activity;
+import android.content.Intent;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.KeyEvent;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
+import android.widget.TextView;
+import android.widget.TextView.OnEditorActionListener;
+
+public class EditActivity extends Activity {
+
+	String originalItem;
+	int location;
+	BlueListApplication blApplication;
+	List<Item> itemList;
+	public static final String CLASS_NAME="EditActivity";
+	
+	@Override
+	/**
+	 * onCreate called when edit activity is created.
+	 * 
+	 * Sets up the application, sets listeners, and gets intent info from calling activity.
+	 *
+	 * @param savedInstanceState
+	 */
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		/* Get application context, item list. */
+		blApplication = (BlueListApplication) getApplicationContext();
+		itemList = blApplication.getItemList();
+		setContentView(R.layout.activity_edit);
+		
+		/* Information required to edit item. */
+		Intent intent = getIntent();
+	    originalItem = intent.getStringExtra("ItemText");
+	    location = intent.getIntExtra("ItemLocation", 0);
+		EditText itemToEdit = (EditText) findViewById(R.id.itemToEdit);
+		itemToEdit.setText(originalItem);
+		
+		/* Set key listener for edittext (done key to accept item to list). */
+		itemToEdit.setOnEditorActionListener(new OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
+                if(actionId==EditorInfo.IME_ACTION_DONE){
+                	finishedEdit(v);
+                    return true;
+                }
+                return false;
+            }
+        });
+	}
+
+	/**
+	 * On completion of edit, edit itemList, return to main activity with edit return code.
+	 * @param View v
+	 */
+	public void finishedEdit(View v) {
+		Item item = itemList.get(location);
+		EditText itemToEdit = (EditText) findViewById(R.id.itemToEdit);
+		String text = itemToEdit.getText().toString();
+		item.setName(text);
+		/**
+		 * IBMObjectResult is used to handle the response from the server after 
+		 * either creating or saving an object.
+		 * 
+		 * onResult is called if the object was successfully saved.
+		 * onError is called if an error occurred saving the object. 
+		 */
+		item.save().continueWith(new Continuation<IBMDataObject, Void>() {
+
+			@Override
+			public Void then(Task<IBMDataObject> task) throws Exception {
+				if(task.isCancelled()) {
+                    Log.e(CLASS_NAME, "Exception : " + task.toString() + " was cancelled.");
+                }
+
+				else if (task.isFaulted()) {
+					Log.e(CLASS_NAME, "Exception : " + task.getError().getMessage());
+				}
+				
+				else {
+                    Intent returnIntent = new Intent();
+                    setResult(BlueListApplication.EDIT_ACTIVITY_RC, returnIntent);
+                    finish();
+				}
+				return null;
+			}
+			
+		},Task.UI_THREAD_EXECUTOR);
+
+	}
+}
+
+
+/*
+ * Copyright 2014 IBM Corp. All Rights Reserved
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ * http://www.apache.org/licenses/LICENSE-2.0 
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.example.blumixlist;
+
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Properties;
+
+import android.app.Activity;
+import android.app.Application;
+import android.content.Context;
+import android.content.res.AssetManager;
+import android.os.Bundle;
+import android.util.Log;
+
+import com.ibm.mobile.services.core.IBMBluemix;
+import com.ibm.mobile.services.data.IBMData;
+
+public final class BlueListApplication extends Application {
+	private static final String APP_ID = "937ddbc1-52c6-4041-a992-bcfbd2066312";
+	private static final String APP_SECRET = "7bd49de1e3d6d8cd3c76f1bc55c8c01cbdc35570";
+	private static final String APP_ROUTE = "mobilecloud.mybluemix.net/";
+	private static final String PROPS_FILE = "bluelist.properties";
+	public static final int EDIT_ACTIVITY_RC = 1;
+	private static final String CLASS_NAME = BlueListApplication.class
+			.getSimpleName();
+	List<Item> itemList;
+
+	public BlueListApplication() {
+		registerActivityLifecycleCallbacks(new ActivityLifecycleCallbacks() {
+			@Override
+			public void onActivityCreated(Activity activity,
+					Bundle savedInstanceState) {
+				Log.d(CLASS_NAME,
+						"Activity created: " + activity.getLocalClassName());
+			}
+
+			@Override
+			public void onActivityStarted(Activity activity) {
+				Log.d(CLASS_NAME,
+						"Activity started: " + activity.getLocalClassName());
+			}
+
+			@Override
+			public void onActivityResumed(Activity activity) {
+				Log.d(CLASS_NAME,
+						"Activity resumed: " + activity.getLocalClassName());
+			}
+
+			@Override
+			public void onActivitySaveInstanceState(Activity activity,
+					Bundle outState) {
+				Log.d(CLASS_NAME,
+						"Activity saved instance state: "
+								+ activity.getLocalClassName());
+			}
+
+			@Override
+			public void onActivityPaused(Activity activity) {
+				Log.d(CLASS_NAME,
+						"Activity paused: " + activity.getLocalClassName());
+			}
+
+			@Override
+			public void onActivityStopped(Activity activity) {
+				Log.d(CLASS_NAME,
+						"Activity stopped: " + activity.getLocalClassName());
+			}
+
+			@Override
+			public void onActivityDestroyed(Activity activity) {
+				Log.d(CLASS_NAME,
+						"Activity destroyed: " + activity.getLocalClassName());
+			}
+		});
+	}
+
+	@Override
+	public void onCreate() {
+		super.onCreate();
+		itemList = new ArrayList<Item>();
+		// Read from properties file.
+		Properties props = new java.util.Properties();
+		Context context = getApplicationContext();
+		try {
+			AssetManager assetManager = context.getAssets();
+			props.load(assetManager.open(PROPS_FILE));
+			Log.i(CLASS_NAME, "Found configuration file: " + PROPS_FILE);
+		} catch (FileNotFoundException e) {
+			Log.e(CLASS_NAME, "The bluelist.properties file was not found.", e);
+		} catch (IOException e) {
+			Log.e(CLASS_NAME,
+					"The bluelist.properties file could not be read properly.", e);
+		}
+		// Initialize the IBM core backend-as-a-service.
+		IBMBluemix.initialize(this, "937ddbc1-52c6-4041-a992-bcfbd2066312", "7bd49de1e3d6d8cd3c76f1bc55c8c01cbdc35570", "mobilecloud.mybluemix.net");
+		// Initialize the IBM Data Service.
+		IBMData.initializeService();
+		// Register the Item Specialization.
+		Item.registerSpecialization(Item.class);
+	}
+
+	/**
+	 * returns the itemList, an array of Item objects.
+	 * 
+	 * @return itemList
+	 */
+	public List<Item> getItemList() {
+		return itemList;
+	}
+}
+
+
+<!-- 
+Copyright 2014 IBM Corp. All Rights Reserved
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+ 
+http://www.apache.org/licenses/LICENSE-2.0  
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/background"
+    tools:context=".EditActivity" >
+    
+   <EditText
+       android:id="@+id/itemToEdit"
+	   android:layout_width="match_parent"
+	   android:layout_height="wrap_content"
+	   android:singleLine="true"
+	   android:imeOptions="actionDone"
+	   android:textSize="19sp"
+	   android:background="@color/white"
+	   android:padding="20dp"
+	   android:ems="10" >
+	</EditText>
+	<LinearLayout
+	    android:orientation="horizontal"
+	    android:layout_width="match_parent"
+	    android:layout_height="match_parent" >
+	 	<Button
+	    	android:layout_height="wrap_content"
+	     	android:layout_width="wrap_content"
+	     	android:layout_margin="20dp"
+	     	android:text="@string/done"
+	     	android:textStyle="bold"
+	     	android:textSize="29sp"
+	     	android:onClick="finishedEdit"
+	     	android:textColor="@color/white"
+	     	android:padding="20dp"
+	     	android:background="@color/done_button_background">
+	 	</Button>
+ 	</LinearLayout>
+
+</LinearLayout>
+
+
+
+<!-- 
+Copyright 2014 IBM Corp. All Rights Reserved
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+ 
+http://www.apache.org/licenses/LICENSE-2.0  
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:orientation="vertical"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    tools:context=".MainActivity" >
+
+   <RelativeLayout 
+        android:layout_height="wrap_content"
+        android:layout_width="fill_parent">
+
+	    <EditText
+	        android:id="@+id/itemToAdd"
+	        android:singleLine="true"
+	        android:imeOptions="actionDone"
+	        android:layout_width="match_parent"
+	        android:layout_height="wrap_content"
+	        android:textSize="19sp"
+	        android:hint="@string/item_to_buy"
+	        android:ems="10"
+	        android:background="@color/white"
+	        android:paddingTop="20dp"
+	        android:paddingBottom="20dp"
+	        android:paddingLeft="55dp">
+	    </EditText>
+	    <Button
+	        android:id="@+id/clearText"
+	        android:layout_width="35dp"
+	        android:layout_height="35dp"
+	        android:layout_centerVertical="true"
+	        android:layout_alignParentRight="true"
+	        android:layout_marginRight="10dp"
+	        android:background="@android:drawable/ic_menu_close_clear_cancel"
+	        android:onClick="clearText">
+	    </Button>
+		<Button
+		    android:id="@+id/acceptText"
+		    android:layout_width="35dp"
+		    android:layout_height="35dp"
+		    android:layout_alignParentLeft="true"
+		    android:layout_centerVertical="true"
+		    android:background="@drawable/plusbutton"
+		    android:onClick="createItem"
+		    android:layout_marginLeft="10dp">
+		</Button>
+	</RelativeLayout>
+
+    <TextView
+        android:id="@+id/titleText"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="@drawable/titlelines"
+        android:fontFamily="Roboto"
+        android:padding="10dp"
+        android:text="@string/title_text"
+        android:textAllCaps="true"
+        android:textColor="@color/list_text_color"
+        android:textSize="28sp"
+        android:textStyle="bold" >
+
+    </TextView>
+    <ListView
+        android:id="@+id/itemsList"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+	    android:background="@color/background">
+    </ListView>
+    
+</LinearLayout>
+
+
+
+
+package com.example.blumixlist;
+
+import java.util.List;
+
+import bolts.Continuation;
+import bolts.Task;
+
+import com.ibm.mobile.services.data.IBMDataObject;
+
+import android.support.v7.app.ActionBarActivity;
+import android.app.Activity;
+import android.content.Intent;
+import android.os.Bundle;
+import android.util.Log;
+import android.view.KeyEvent;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.View;
+import android.view.inputmethod.EditorInfo;
+import android.widget.EditText;
+import android.widget.TextView;
+import android.widget.TextView.OnEditorActionListener;
+
+public class EditActivity extends Activity {
+
+	String originalItem;
+	int location;
+	BlueListApplication blApplication;
+	List<Item> itemList;
+	public static final String CLASS_NAME="EditActivity";
+	
+	@Override
+	/**
+	 * onCreate called when edit activity is created.
+	 * 
+	 * Sets up the application, sets listeners, and gets intent info from calling activity.
+	 *
+	 * @param savedInstanceState
+	 */
+	protected void onCreate(Bundle savedInstanceState) {
+		super.onCreate(savedInstanceState);
+		/* Get application context, item list. */
+		blApplication = (BlueListApplication) getApplicationContext();
+		itemList = blApplication.getItemList();
+		setContentView(R.layout.activity_edit);
+		
+		/* Information required to edit item. */
+		Intent intent = getIntent();
+	    originalItem = intent.getStringExtra("ItemText");
+	    location = intent.getIntExtra("ItemLocation", 0);
+		EditText itemToEdit = (EditText) findViewById(R.id.itemToEdit);
+		itemToEdit.setText(originalItem);
+		
+		/* Set key listener for edittext (done key to accept item to list). */
+		itemToEdit.setOnEditorActionListener(new OnEditorActionListener() {
+            @Override
+            public boolean onEditorAction(TextView v, int actionId, KeyEvent event) {
+                if(actionId==EditorInfo.IME_ACTION_DONE){
+                	finishedEdit(v);
+                    return true;
+                }
+                return false;
+            }
+        });
+	}
+
+	/**
+	 * On completion of edit, edit itemList, return to main activity with edit return code.
+	 * @param View v
+	 */
+	public void finishedEdit(View v) {
+		Item item = itemList.get(location);
+		EditText itemToEdit = (EditText) findViewById(R.id.itemToEdit);
+		String text = itemToEdit.getText().toString();
+		item.setName(text);
+		/**
+		 * IBMObjectResult is used to handle the response from the server after 
+		 * either creating or saving an object.
+		 * 
+		 * onResult is called if the object was successfully saved.
+		 * onError is called if an error occurred saving the object. 
+		 */
+		item.save().continueWith(new Continuation<IBMDataObject, Void>() {
+
+			@Override
+			public Void then(Task<IBMDataObject> task) throws Exception {
+				if(task.isCancelled()) {
+                    Log.e(CLASS_NAME, "Exception : " + task.toString() + " was cancelled.");
+                }
+
+				else if (task.isFaulted()) {
+					Log.e(CLASS_NAME, "Exception : " + task.getError().getMessage());
+				}
+				
+				else {
+                    Intent returnIntent = new Intent();
+                    setResult(BlueListApplication.EDIT_ACTIVITY_RC, returnIntent);
+                    finish();
+				}
+				return null;
+			}
+			
+		},Task.UI_THREAD_EXECUTOR);
+
+	}
+}
+
+
+
+<!-- 
+Copyright 2014 IBM Corp. All Rights Reserved
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+ 
+http://www.apache.org/licenses/LICENSE-2.0  
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<TextView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/text1"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:textColor="@color/list_text_color"
+    android:textSize="30sp"
+    android:gravity="center_vertical"
+    android:padding="10dp"
+    android:layout_marginLeft="10dp"
+/>
+
+
+
+
+/*
+ * Copyright 2014 IBM Corp. All Rights Reserved
+ * 
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ * 
+ * http://www.apache.org/licenses/LICENSE-2.0 
+ * 
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+package com.example.blumixlist;
+
+import com.ibm.mobile.services.data.IBMDataObject;
+import com.ibm.mobile.services.data.IBMDataObjectSpecialization;
+
+@IBMDataObjectSpecialization("Item")
+public class Item extends IBMDataObject {
+	public static final String CLASS_NAME = "Item";
+	private static final String NAME = "name";
+	
+	/**
+	 * Gets the name of the Item.
+	 * @return String itemName
+	 */
+	public String getName() {
+		return (String) getObject(NAME);
+	}
+
+	/**
+	 * Sets the name of a list item, as well as calls setCreationTime().
+	 * @param String itemName
+	 */
+	public void setName(String itemName) {
+		setObject(NAME, (itemName != null) ? itemName : "");
+	}
+	
+	/**
+	 * When calling toString() for an item, we'd really only want the name.
+	 * @return String theItemName
+	 */
+	public String toString() {
+		String theItemName = "";
+		theItemName = getName();
+		return theItemName;
+	}
+}
